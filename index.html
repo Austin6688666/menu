@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#fff8f0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>小厨房 · 点菜</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%B3%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<!-- ==================== 设置向导 ==================== -->
+<section class="view" id="view-setup">
+  <header class="top">
+    <div class="hello">第一次使用</div>
+    <h1>配置<em>一下</em></h1>
+    <div class="sub">两步：建个免费数据库 → 把地址粘进来<br>之后这个网页就是一个能实时同步的点菜站</div>
+  </header>
+
+  <div class="setup-card">
+    <h3>1. 建数据库（只需一次，约 2 分钟）</h3>
+    <p>
+      打开 <code>supabase.com</code> 用 GitHub 登录 → New project（区域选 Singapore）→
+      左侧 SQL Editor → 把仓库里 <code>schema.sql</code> 的内容粘进去 → Run。
+    </p>
+    <p>然后到 <code>Project Settings → API</code> 复制两个值：</p>
+    <input id="inUrl" placeholder="Project URL  例如 https://abcd1234.supabase.co" autocomplete="off" spellcheck="false">
+    <input id="inKey" placeholder="anon public key  以 eyJ 开头的一长串" autocomplete="off" spellcheck="false">
+    <button class="btn" style="width:100%" id="btnGen">生成两个链接</button>
+    <div class="warn">anon key 本来就是公开用的（安全靠数据库权限），但别把「你的链接」乱发。</div>
+  </div>
+
+  <div class="setup-card" id="resultCard" style="display:none">
+    <h3>2. 这两条链接保存好</h3>
+    <p>她的：发给女朋友，她只管点菜</p>
+    <div class="linkbox" id="linkOrder"></div>
+    <button class="btn ghost sm" data-copy="linkOrder">复制她的链接</button>
+    <p style="margin-top:16px">你的：你自己打开，看单、改状态、回话</p>
+    <div class="linkbox" id="linkChef"></div>
+    <button class="btn ghost sm" data-copy="linkChef">复制你的链接</button>
+    <p style="margin-top:16px">当前浏览器直接进入：</p>
+    <button class="btn sm" id="btnEnterOrder">我是她，去点菜</button>
+    <button class="btn sm" id="btnEnterChef" style="background:#3f2d23;box-shadow:none">我是主厨，去看单</button>
+  </div>
+
+  <div style="text-align:center;margin:18px 0 30px;font-size:12.5px;color:var(--ink-soft)">
+    已经有链接了？直接用它打开就行，配置会记在浏览器里。
+  </div>
+</section>
+
+<!-- ==================== 点菜 ==================== -->
+<section class="view" id="view-order">
+  <header class="top">
+    <div class="hello" id="helloOrder">小厨房</div><a class="gear" href="#mode=setup" title="设置">⚙</a>
+    <h1>今天想吃什么<em>？</em></h1>
+    <div class="sub">点好就告诉我，我来做 🍳<br>你点的每一道我都会立刻看到</div>
+  </header>
+  <div class="tabs" id="tabs"></div>
+  <main id="menu"></main>
+  <section>
+    <div class="section-title">
+      <h2>我点的</h2>
+      <div class="meta" id="mineMeta"></div>
+    </div>
+    <div id="mine"></div>
+  </section>
+</section>
+
+<!-- ==================== 看单 ==================== -->
+<section class="view" id="view-chef">
+  <header class="top">
+    <div class="hello">主厨视角</div><a class="gear" href="#mode=setup" title="设置">⚙</a>
+    <h1>她点了<em>什么</em></h1>
+    <div class="sub" id="subline">新订单会自动跳出来，不用刷新</div>
+  </header>
+  <div class="stats">
+    <div class="stat hot"><div class="v" id="sPending">0</div><div class="l">待处理</div></div>
+    <div class="stat"><div class="v" id="sToday">0</div><div class="l">今天做了</div></div>
+    <div class="stat"><div class="v" id="sTotal">0</div><div class="l">全部</div></div>
+  </div>
+  <div class="toolbar">
+    <span class="sync-dot" id="syncDot"><i></i><span id="syncText">连接中</span></span>
+    <button class="toggle" id="soundBtn">🔔 提示音</button>
+    <button class="toggle" id="notifyBtn">📣 通知</button>
+  </div>
+  <main id="list"></main>
+</section>
+
+<div class="bar" id="bar">
+  <div class="inner">
+    <div class="summary">
+      <b id="barCount">已选 0 道</b>
+      <span class="picked" id="barPicked"></span>
+    </div>
+    <button class="btn" id="goSubmit">就这些</button>
+  </div>
+</div>
+
+<div class="sheet-mask" id="mask"></div>
+<div class="sheet" id="sheet">
+  <div class="grip"></div>
+  <h3>确认一下 🍽️</h3>
+  <div class="hint">告诉我细节，做出来更好吃</div>
+  <div class="picked-list" id="pickedList"></div>
+  <div id="questions"></div>
+  <div class="field">
+    <label>还想说的</label>
+    <textarea id="note" placeholder="比如：少放盐、想吃热的、今天不太舒服…"></textarea>
+  </div>
+  <button class="btn" style="width:100%" id="submit">发给他 →</button>
+</div>
+
+<div id="toast"></div>
+
+<script src="./supabase.js"></script>
+<script type="module">
+const { createClient } = window.supabase;
+
+/* ------------------------------- 菜单 ------------------------------- */
+const MENU = [
+  { key: 'meat', name: '硬菜', emoji: '🍖', items: [
+    ['hongshaorou', '红烧肉', '🥘'], ['tangcu_paigu', '糖醋排骨', '🍖'], ['kele_jichi', '可乐鸡翅', '🍗'],
+    ['gongbao_jiding', '宫保鸡丁', '🌶️'], ['huiguorou', '回锅肉', '🥓'], ['qingjiao_rousi', '青椒肉丝', '🫑'],
+    ['fanqie_niunan', '番茄牛腩', '🍅'], ['heijiao_niuliu', '黑椒牛柳', '🥩']
+  ].map(([id, name, emoji]) => ({ id, name, emoji })) },
+  { key: 'veg', name: '素菜', emoji: '🥬', items: [
+    ['di3sanxian', '地三鲜', '🍆'], ['qingchao_shishu', '清炒时蔬', '🥬'], ['ganbian_doujiao', '干煸豆角', '🫛'],
+    ['pai_huanggua', '拍黄瓜', '🥒'], ['xihongshi_chao_egg', '西红柿炒蛋', '🍅'], ['mapo_doufu', '麻婆豆腐', '🌶️'],
+    ['tudousi', '醋溜土豆丝', '🥔']
+  ].map(([id, name, emoji]) => ({ id, name, emoji })) },
+  { key: 'soup', name: '汤粥', emoji: '🍲', items: [
+    ['fanqie_dantang', '番茄蛋汤', '🍲'], ['yumi_paigu_tang', '玉米排骨汤', '🌽'],
+    ['xiaomizhou', '小米粥', '🥣'], ['zicai_danhua', '紫菜蛋花汤', '🥚']
+  ].map(([id, name, emoji]) => ({ id, name, emoji })) },
+  { key: 'staple', name: '主食', emoji: '🍚', items: [
+    ['mifan', '米饭', '🍚'], ['chaofan', '蛋炒饭', '🍳'], ['niurou_mian', '牛肉面', '🍜'],
+    ['jiaozi', '饺子', '🥟'], ['congyoubing', '葱油饼', '🫓']
+  ].map(([id, name, emoji]) => ({ id, name, emoji })) },
+  { key: 'sweet', name: '甜品', emoji: '🍮', items: [
+    ['shuangpinai', '双皮奶', '🍮'], ['taohua_geng', '桃胶炖奶', '🥛'],
+    ['shuiguo_pan', '水果拼盘', '🍓'], ['yin_er_geng', '银耳羹', '🍵']
+  ].map(([id, name, emoji]) => ({ id, name, emoji })) },
+  { key: 'drink', name: '饮品', emoji: '🥤', items: [
+    ['zhenzhu_naicha', '珍珠奶茶', '🧋'], ['ningshui', '柠檬水', '🍋'],
+    ['suannai', '酸奶', '🥛'], ['kekeke', '热可可', '🍫']
+  ].map(([id, name, emoji]) => ({ id, name, emoji })) }
+];
+
+const QUESTIONS = [
+  { id: 'spice', label: '辣度', options: ['不辣', '微辣', '中辣', '特辣'] },
+  { id: 'when', label: '什么时候吃', options: ['现在就想', '午饭', '晚饭', '当夜宵', '明天'] },
+  { id: 'mood', label: '今天心情', options: ['开心 🥰', '有点累 😮‍💨', '想吃点好的 🤤', '不太舒服 🤒'] }
+];
+
+const STATUS_TEXT = {
+  pending: '等他看 👀', accepted: '今晚做 🍳', done: '做好啦 ✅', passed: '改天吧 😌'
+};
+const STATUS_TEXT_SHORT = { pending: '待处理', accepted: '今晚做', done: '已做好', passed: '改天' };
+
+/* ------------------------------- 工具 ------------------------------- */
+const $ = (s) => document.querySelector(s);
+const el = (tag, cls, html) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html != null) n.innerHTML = html;
+  return n;
+};
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+let toastTimer = null;
+function toast(msg, ms = 2200) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), ms);
+}
+function b64enc(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  let bin = '';
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64dec(str) {
+  const s = str.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = s + '='.repeat((4 - (s.length % 4)) % 4);
+  const bin = atob(padded);
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+function showView(name) {
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('on'));
+  const v = document.getElementById('view-' + name);
+  if (v) v.classList.add('on');
+  document.body.dataset.view = name;
+}
+
+/* ------------------------------- 配置 ------------------------------- */
+function parseHash() {
+  const h = location.hash.replace(/^#/, '');
+  const p = new URLSearchParams(h);
+  const out = {};
+  if (p.get('s')) {
+    try { Object.assign(out, b64dec(p.get('s'))); } catch (_) {}
+  }
+  if (p.get('mode')) out.mode = p.get('mode');
+  if (p.get('demo')) out.demo = p.get('demo');
+  return out;
+}
+function loadLocal() {
+  try { return JSON.parse(localStorage.getItem('mk_cfg') || '{}'); } catch (_) { return {}; }
+}
+function saveLocal(cfg) {
+  try { localStorage.setItem('mk_cfg', JSON.stringify(cfg)); } catch (_) {}
+}
+
+const hashCfg = parseHash();
+const localCfg = loadLocal();
+const CFG = {
+  u: hashCfg.u || localCfg.u || '',
+  k: hashCfg.k || localCfg.k || ''
+};
+let MODE = hashCfg.mode || localCfg.mode || (CFG.u ? 'order' : 'setup');
+if (hashCfg.u && hashCfg.k) saveLocal({ u: CFG.u, k: CFG.k, mode: MODE });
+
+/* 同源只改 hash 不会重载页面，这里强制重载，保证换链接即切视图 */
+const _lastHash = location.hash;
+window.addEventListener('hashchange', () => {
+  if (location.hash !== _lastHash && /mode=|s=/.test(location.hash)) location.reload();
+});
+
+/* ------------------------------- 设置向导 ------------------------------- */
+const baseUrl = location.origin + location.pathname;
+
+function buildLinks() {
+  const url = $('#inUrl').value.trim().replace(/\/+$/, '');
+  const key = $('#inKey').value.trim();
+  if (!/^https?:\/\//.test(url)) return toast('Project URL 要以 https:// 开头');
+  if (key.length < 40) return toast('anon key 看起来不对（太短）');
+  const s = b64enc({ u: url, k: key });
+  $('#linkOrder').textContent = `${baseUrl}#mode=order&s=${s}`;
+  $('#linkChef').textContent = `${baseUrl}#mode=chef&s=${s}`;
+  $('#resultCard').style.display = 'block';
+  saveLocal({ u: url, k: key });
+  toast('链接生成好了，往下翻 👇');
+}
+if ($('#btnGen')) $('#btnGen').onclick = buildLinks;
+document.querySelectorAll('[data-copy]').forEach((b) => {
+  b.onclick = async () => {
+    const text = document.getElementById(b.dataset.copy).textContent;
+    try { await navigator.clipboard.writeText(text); toast('已复制 ✅'); }
+    catch (_) { toast('长按手动复制吧'); }
+  };
+});
+if ($('#btnEnterOrder')) $('#btnEnterOrder').onclick = () => {
+  const url = $('#inUrl').value.trim().replace(/\/+$/, '');
+  const key = $('#inKey').value.trim();
+  if (!url || !key) return toast('先把两个值填上');
+  const s = b64enc({ u: url, k: key });
+  location.href = `${baseUrl}#mode=order&s=${s}`;
+  location.reload();
+};
+if ($('#btnEnterChef')) $('#btnEnterChef').onclick = () => {
+  const url = $('#inUrl').value.trim().replace(/\/+$/, '');
+  const key = $('#inKey').value.trim();
+  if (!url || !key) return toast('先把两个值填上');
+  const s = b64enc({ u: url, k: key });
+  location.href = `${baseUrl}#mode=chef&s=${s}`;
+  location.reload();
+};
+
+/* ------------------------------- 初始化 ------------------------------- */
+if (MODE === 'setup' || !CFG.u || !CFG.k) {
+  showView('setup');
+  if (CFG.u) {
+    $('#inUrl').value = CFG.u;
+    $('#inKey').value = CFG.k;
+  }
+  await new Promise(() => {}); // 停在设置页，不继续初始化
+}
+
+showView(MODE === 'chef' ? 'chef' : 'order');
+
+const sb = createClient(CFG.u, CFG.k, { realtime: { params: { eventsPerSecond: 5 } } });
+let ORDERS = [];
+let CART = new Map();
+let ACTIVE = 'all';
+let ANSWERS = {};
+let SOUND = localStorage.getItem('chefSound') !== 'off';
+let NEW_IDS = new Set();
+
+/* ------------------------------- 菜单渲染 ------------------------------- */
+function allItems() {
+  const out = [];
+  for (const g of MENU) for (const it of g.items) out.push({ ...it, group: g.name, groupKey: g.key });
+  return out;
+}
+function renderTabs() {
+  const tabs = $('#tabs');
+  tabs.innerHTML = '';
+  const mk = (key, label) => {
+    const b = el('button', 'tab' + (ACTIVE === key ? ' on' : ''), label);
+    b.onclick = () => { ACTIVE = key; renderTabs(); renderMenu(); };
+    return b;
+  };
+  tabs.appendChild(mk('all', '全部 🍽️'));
+  for (const g of MENU) tabs.appendChild(mk(g.key, `${g.emoji} ${g.name}`));
+}
+function renderMenu() {
+  const wrap = $('#menu');
+  wrap.innerHTML = '';
+  for (const g of MENU) {
+    if (ACTIVE !== 'all' && g.key !== ACTIVE) continue;
+    if (ACTIVE === 'all') wrap.appendChild(el('div', 'group-title', `${g.emoji} ${g.name} <span class="count">${g.items.length} 道</span>`));
+    const grid = el('div', 'grid');
+    for (const it of g.items) {
+      const d = el('div', 'dish' + (CART.has(it.id) ? ' on' : ''));
+      d.innerHTML = `<div class="emoji">${it.emoji}</div><div class="name">${it.name}</div>`;
+      if (CART.has(it.id) && CART.get(it.id) > 1) d.appendChild(el('div', 'qty', '×' + CART.get(it.id)));
+      d.onclick = () => {
+        CART.set(it.id, (CART.get(it.id) || 0) + 1);
+        if (navigator.vibrate) navigator.vibrate(8);
+        renderMenu(); renderBar();
+      };
+      d.oncontextmenu = (e) => {
+        e.preventDefault();
+        const q = (CART.get(it.id) || 0) - 1;
+        if (q <= 0) CART.delete(it.id); else CART.set(it.id, q);
+        renderMenu(); renderBar();
+      };
+      grid.appendChild(d);
+    }
+    wrap.appendChild(grid);
+  }
+}
+function renderBar() {
+  const bar = $('#bar');
+  const n = CART.size;
+  if (document.body.dataset.view !== 'order') { bar.classList.remove('show'); return; }
+  bar.classList.toggle('show', n > 0);
+  const total = [...CART.values()].reduce((a, b) => a + b, 0);
+  $('#barCount').textContent = `已选 ${n} 道${total > n ? ` · 共 ${total} 份` : ''}`;
+  $('#barPicked').textContent = allItems().filter((i) => CART.has(i.id))
+    .map((i) => i.name + (CART.get(i.id) > 1 ? '×' + CART.get(i.id) : '')).join('、');
+}
+
+/* ------------------------------- 抽屉 ------------------------------- */
+function openSheet() {
+  if (!CART.size) return;
+  const list = $('#pickedList');
+  list.innerHTML = '';
+  for (const it of allItems().filter((i) => CART.has(i.id))) {
+    const p = el('div', 'pill', `${it.emoji} ${it.name}${CART.get(it.id) > 1 ? ` <b>×${CART.get(it.id)}</b>` : ''}`);
+    p.onclick = () => {
+      CART.delete(it.id); renderMenu(); renderBar();
+      openSheet();
+      if (!CART.size) closeSheet();
+    };
+    list.appendChild(p);
+  }
+  const qs = $('#questions');
+  qs.innerHTML = '';
+  for (const q of QUESTIONS) {
+    const f = el('div', 'field');
+    f.appendChild(el('label', null, q.label));
+    const chips = el('div', 'chips');
+    for (const opt of q.options) {
+      const c = el('button', 'chip' + (ANSWERS[q.id] === opt ? ' on' : ''), opt);
+      c.onclick = () => {
+        ANSWERS[q.id] = ANSWERS[q.id] === opt ? undefined : opt;
+        [...chips.children].forEach((x) => x.classList.remove('on'));
+        if (ANSWERS[q.id]) c.classList.add('on');
+      };
+      chips.appendChild(c);
+    }
+    f.appendChild(chips);
+    qs.appendChild(f);
+  }
+  $('#mask').classList.add('on');
+  $('#sheet').classList.add('on');
+}
+function closeSheet() {
+  $('#mask').classList.remove('on');
+  $('#sheet').classList.remove('on');
+}
+
+/* ------------------------------- 下单 ------------------------------- */
+async function submitOrder() {
+  const btn = $('#submit');
+  const items = allItems().filter((i) => CART.has(i.id)).map((i) => ({
+    id: i.id, name: i.name, emoji: i.emoji, group: i.group, qty: CART.get(i.id)
+  }));
+  if (!items.length) return;
+  const answers = {};
+  for (const k of Object.keys(ANSWERS)) if (ANSWERS[k]) answers[k] = ANSWERS[k];
+  btn.disabled = true; btn.textContent = '发送中…';
+  const { data, error } = await sb.from('orders').insert({
+    items, answers, note: $('#note').value.trim(), status: 'pending'
+  }).select().single();
+  btn.disabled = false; btn.textContent = '发给他 →';
+  if (error) {
+    toast('没发出去：' + error.message, 5000);
+    console.error(error);
+    return;
+  }
+  CART.clear(); ANSWERS = {}; $('#note').value = '';
+  closeSheet(); renderMenu(); renderBar();
+  toast('已经告诉他啦 💌');
+  if (navigator.vibrate) navigator.vibrate([12, 40, 12]);
+  if (data) { NEW_IDS.add(data.id); ORDERS = [data, ...ORDERS]; renderOrders(); }
+}
+
+/* ------------------------------- 订单列表 ------------------------------- */
+function fmtTime(iso) {
+  const d = new Date(iso);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+  if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function renderOrders() {
+  const wrap = $('#mine');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  $('#mineMeta').textContent = ORDERS.length ? `共 ${ORDERS.length} 次` : '';
+  if (!ORDERS.length) {
+    wrap.appendChild(el('div', 'empty', '<span class="big">🍚</span>还没点过菜<br>上面挑几个吧'));
+    return;
+  }
+  for (const o of ORDERS.slice(0, 20)) {
+    const card = el('div', 'order' + (NEW_IDS.has(o.id) ? ' fresh' : ''));
+    card.appendChild(el('div', 'head',
+      `<span class="time">${fmtTime(o.created_at)}</span><span class="badge ${o.status}">${STATUS_TEXT[o.status] || o.status}</span>`));
+    card.appendChild(el('div', 'items',
+      (o.items || []).map((i) => `<span class="i">${i.emoji || ''} ${escapeHtml(i.name)}${i.qty > 1 ? ' ×' + i.qty : ''}</span>`).join('')));
+    const ans = Object.values(o.answers || {});
+    if (ans.length) {
+      const a = el('div', 'answers');
+      ans.forEach((v) => a.appendChild(el('span', null, escapeHtml(v))));
+      card.appendChild(a);
+    }
+    if (o.note) card.appendChild(el('div', 'note', escapeHtml(o.note)));
+    if (o.chef_reply) card.appendChild(el('div', 'reply', '💬 ' + escapeHtml(o.chef_reply)));
+    wrap.appendChild(card);
+  }
+  NEW_IDS.clear();
+}
+
+/* ------------------------------- 主厨视图 ------------------------------- */
+let audioCtx = null;
+function beep(times = 2) {
+  if (!SOUND) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    for (let i = 0; i < times; i++) {
+      const t0 = audioCtx.currentTime + i * 0.18;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, t0);
+      osc.frequency.exponentialRampToValueAtTime(1320, t0 + 0.09);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.22, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t0); osc.stop(t0 + 0.18);
+    }
+  } catch (_) {}
+}
+function notify(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try { new Notification(title, { body, tag: 'menu' }); } catch (_) {}
+}
+
+async function setStatus(id, status, reply) {
+  const { error } = await sb.from('orders').update({
+    status, chef_reply: reply || '', status_at: new Date().toISOString()
+  }).eq('id', id);
+  if (error) return toast('改不了：' + error.message, 4000);
+  toast(status === 'accepted' ? '已告诉她：今晚做 🍳' : status === 'done' ? '已标记做好 ✅' : '已改成改天 😌');
+  beep(1);
+}
+async function delOrder(id) {
+  if (!confirm('删掉这一单？')) return;
+  const { error } = await sb.from('orders').delete().eq('id', id);
+  if (error) return toast('删不了：' + error.message, 4000);
+  toast('已删除');
+}
+
+function renderChef() {
+  const list = $('#list');
+  if (!list) return;
+  const scrollY = window.scrollY;
+  list.innerHTML = '';
+  const sorted = ORDERS.slice().sort((a, b) => {
+    const rank = (s) => (s === 'pending' ? 0 : s === 'accepted' ? 1 : s === 'done' ? 2 : 3);
+    const d = rank(a.status) - rank(b.status);
+    return d !== 0 ? d : String(b.created_at).localeCompare(String(a.created_at));
+  });
+  if (!sorted.length) {
+    list.appendChild(el('div', 'empty', '<span class="big">🕊️</span>还没有点单<br>把她那条链接发给她吧'));
+  }
+  for (const o of sorted) {
+    const card = el('div', 'order' + (NEW_IDS.has(o.id) && o.status === 'pending' ? ' fresh' : ''));
+    card.appendChild(el('div', 'head',
+      `<span class="time">${fmtTime(o.created_at)}</span><span class="badge ${o.status}">${STATUS_TEXT_SHORT[o.status] || o.status}</span>`));
+    card.appendChild(el('div', 'items',
+      (o.items || []).map((i) => `<span class="i">${i.emoji || ''} ${escapeHtml(i.name)}${i.qty > 1 ? ' ×' + i.qty : ''}</span>`).join('')));
+    const ans = Object.values(o.answers || {});
+    if (ans.length) {
+      const a = el('div', 'answers');
+      ans.forEach((v) => a.appendChild(el('span', null, escapeHtml(v))));
+      card.appendChild(a);
+    }
+    if (o.note) card.appendChild(el('div', 'note', escapeHtml(o.note)));
+    if (o.chef_reply) card.appendChild(el('div', 'reply', '💬 ' + escapeHtml(o.chef_reply)));
+
+    const replyWrap = el('div', 'field');
+    replyWrap.style.margin = '12px 0 0';
+    const input = el('input');
+    input.placeholder = '回她一句（可选）';
+    input.value = o.chef_reply || '';
+    input.style.cssText = 'width:100%;border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-family:inherit;font-size:13.5px;outline:none;background:#fff';
+    replyWrap.appendChild(input);
+    card.appendChild(replyWrap);
+
+    const actions = el('div', 'actions');
+    for (const a of [
+      { to: 'accepted', label: '🍳 今晚做', cls: 'gold' },
+      { to: 'done', label: '✅ 做好啦', cls: 'mint' },
+      { to: 'passed', label: '😌 改天', cls: 'ghost' }
+    ]) {
+      if (o.status === a.to) continue;
+      const b = el('button', `btn sm ${a.cls}`, a.label);
+      b.onclick = () => setStatus(o.id, a.to, input.value.trim());
+      actions.appendChild(b);
+    }
+    const d = el('button', 'btn sm ghost', '🗑');
+    d.onclick = () => delOrder(o.id);
+    actions.appendChild(d);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+  const today = new Date().toDateString();
+  $('#sPending').textContent = ORDERS.filter((o) => o.status === 'pending').length;
+  $('#sToday').textContent = ORDERS.filter((o) => o.status === 'done' && new Date(o.status_at || o.created_at).toDateString() === today).length;
+  $('#sTotal').textContent = ORDERS.length;
+  window.scrollTo(0, scrollY);
+}
+
+/* ------------------------------- 数据同步 ------------------------------- */
+async function loadOrders() {
+  const { data, error } = await sb.from('orders').select('*').order('created_at', { ascending: false }).limit(200);
+  if (error) {
+    toast('读不到数据：' + error.message, 6000);
+    console.error(error);
+    return;
+  }
+  ORDERS = data || [];
+  if (MODE === 'chef') renderChef(); else renderOrders();
+}
+
+function subscribe() {
+  const dot = $('#syncDot');
+  sb.channel('menu-kitchen')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
+      const { eventType, new: row, old } = payload;
+      if (eventType === 'INSERT' && row) {
+        ORDERS = [row, ...ORDERS.filter((o) => o.id !== row.id)];
+        NEW_IDS.add(row.id);
+        if (MODE === 'chef') {
+          beep(2);
+          const summary = (row.items || []).map((i) => i.name + (i.qty > 1 ? '×' + i.qty : '')).join('、');
+          toast(`💌 她点了：${summary}`, 4000);
+          notify('她点菜了 💌', summary + (row.note ? `｜${row.note}` : ''));
+          if (navigator.vibrate) navigator.vibrate([15, 60, 15]);
+        }
+      } else if (eventType === 'UPDATE' && row) {
+        const before = ORDERS.find((o) => o.id === row.id);
+        ORDERS = ORDERS.map((o) => (o.id === row.id ? row : o));
+        if (MODE === 'order' && before && before.status !== row.status) {
+          if (row.status === 'done') toast('做好啦，快来吃 🍽️', 3200);
+          else if (row.status === 'accepted') toast('他说今晚做这个 🍳', 3200);
+          else if (row.status === 'passed') toast('他说改天再做 😌', 3200);
+          if (row.chef_reply && before.chef_reply !== row.chef_reply) setTimeout(() => toast('💬 ' + row.chef_reply, 4200), 900);
+        }
+      } else if (eventType === 'DELETE' && old) {
+        ORDERS = ORDERS.filter((o) => o.id !== old.id);
+      }
+      if (MODE === 'chef') renderChef(); else renderOrders();
+      if (dot) { dot.classList.remove('off'); $('#syncText').textContent = '实时'; }
+    })
+    .subscribe((status) => {
+      if (!dot) return;
+      const ok = status === 'SUBSCRIBED';
+      dot.classList.toggle('off', !ok);
+      $('#syncText').textContent = ok ? '实时' : status.toLowerCase().replace(/_/g, ' ');
+    });
+}
+
+/* ------------------------------- 启动 ------------------------------- */
+if (MODE === 'order') {
+  renderTabs(); renderMenu(); renderBar();
+  $('#goSubmit').onclick = openSheet;
+  $('#mask').onclick = closeSheet;
+  $('#submit').onclick = submitOrder;
+  if (hashCfg.demo) {
+    ['hongshaorou', 'qingchao_shishu', 'mifan'].forEach((id) => CART.set(id, 1));
+    renderMenu(); renderBar(); openSheet();
+  }
+} else {
+  $('#soundBtn').classList.toggle('on', SOUND);
+  $('#soundBtn').onclick = () => {
+    SOUND = !SOUND;
+    localStorage.setItem('chefSound', SOUND ? 'on' : 'off');
+    $('#soundBtn').classList.toggle('on', SOUND);
+    if (SOUND) beep(1);
+  };
+  $('#notifyBtn').onclick = async () => {
+    if (!('Notification' in window)) return toast('这个浏览器不支持通知');
+    if (Notification.permission === 'granted') return toast('通知已经开着啦');
+    const p = await Notification.requestPermission();
+    $('#notifyBtn').classList.toggle('on', p === 'granted');
+    toast(p === 'granted' ? '通知已开启 📣' : '没给通知权限');
+  };
+  if ('Notification' in window && Notification.permission === 'granted') $('#notifyBtn').classList.add('on');
+}
+
+loadOrders();
+subscribe();
+setInterval(loadOrders, 60000); // 兜底轮询，实时断了也不丢单
+</script>
+</body>
+</html>
