@@ -180,6 +180,40 @@ function toast(msg, ms = 2200) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('on'), ms);
 }
+/* 出问题时把真实原因摊在页面上，而不是一句「读不到数据」 */
+let diagBox = null;
+function diag(title, detail) {
+  if (!diagBox) {
+    diagBox = document.createElement('div');
+    diagBox.className = 'diag';
+    document.body.appendChild(diagBox);
+  }
+  const mask = (k) => (k ? k.slice(0, 14) + '…（' + k.length + ' 字符）' : '（空）');
+  diagBox.innerHTML =
+    '<div class="diag-h">⚠️ ' + escapeHtml(title) + '</div>' +
+    '<pre>' + escapeHtml(detail || '') + '</pre>' +
+    '<div class="diag-meta">数据库：' + escapeHtml(CFG.u || '（空）') +
+    '<br>key：' + escapeHtml(mask(CFG.k)) + '</div>' +
+    '<div class="diag-act">' +
+    '<button class="btn sm" id="diagRetry">重新检测</button>' +
+    '<button class="btn sm ghost" id="diagSetup">去设置</button>' +
+    '</div>';
+  diagBox.classList.add('on');
+  const r = diagBox.querySelector('#diagRetry');
+  const g = diagBox.querySelector('#diagSetup');
+  if (r) r.onclick = () => location.reload();
+  if (g) g.onclick = () => { location.hash = 'mode=setup'; location.reload(); };
+  return diagBox.innerText;
+}
+function classifyErr(msg) {
+  const m = String(msg || '');
+  if (/401|403|invalid api key|jwt/i.test(m)) return 'key 不对 → Project Settings → API 重新复制 anon public';
+  if (/PGRST205|does not exist|42P01|404/i.test(m)) return 'orders 表不存在 → 回 Supabase SQL Editor 重跑 schema.sql';
+  if (/permission denied|42501|row-level security/i.test(m)) return '权限策略没建 → 重跑 schema.sql 里的 create policy 那几行';
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return '连不上这个地址 → URL 写错、多了空格、或者网络打不开 supabase.co';
+  return '';
+}
+
 function b64enc(obj) {
   const bytes = new TextEncoder().encode(JSON.stringify(obj));
   let bin = '';
@@ -610,7 +644,9 @@ function renderChef() {
 async function loadOrders() {
   const { data, error } = await sb.from('orders').select('*').order('created_at', { ascending: false }).limit(200);
   if (error) {
-    toast('读不到数据：' + error.message, 6000);
+    const hint = classifyErr(error.message || '');
+    diag('读不到数据：' + (error.message || '未知错误'),
+      (hint ? '诊断：' + hint + '\n\n' : '') + '原始错误：' + (error.message || JSON.stringify(error)));
     console.error(error);
     return;
   }
@@ -653,6 +689,11 @@ function subscribe() {
       const ok = status === 'SUBSCRIBED';
       dot.classList.toggle('off', !ok);
       $('#syncText').textContent = ok ? '实时' : status.toLowerCase().replace(/_/g, ' ');
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        const hint = classifyErr(status);
+        diag('实时推送没连上（' + status + '）',
+          '订单能读，但新单不会自动弹出来。通常是没执行这句：\n  alter publication supabase_realtime add table public.orders;\n\n去 SQL Editor 单独跑一次再刷新。');
+      }
     });
 }
 
