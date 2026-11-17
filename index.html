@@ -29,6 +29,8 @@
     <input id="inUrl" placeholder="Project URL  例如 https://abcd1234.supabase.co" autocomplete="off" spellcheck="false">
     <input id="inKey" placeholder="anon public key  以 eyJ 开头的一长串" autocomplete="off" spellcheck="false">
     <button class="btn" style="width:100%" id="btnGen">生成两个链接</button>
+    <button class="btn ghost" style="width:100%;margin-top:10px" id="btnTest">🔍 还是不行？点这里自检</button>
+    <div class="warn" id="testResult" style="display:none"></div>
     <div class="warn">anon key 本来就是公开用的（安全靠数据库权限），但别把「你的链接」乱发。</div>
   </div>
 
@@ -247,6 +249,56 @@ function buildLinks() {
   saveLocal({ u: url, k: key });
   toast('链接生成好了，往下翻 👇');
 }
+async function testConn() {
+  const url = ($('#inUrl').value || '').trim().replace(/\/+$/, '');
+  const key = ($('#inKey').value || '').trim();
+  const box = $('#testResult');
+  const say = (msg, ok) => {
+    box.style.display = 'block';
+    box.textContent = msg;
+    box.style.color = ok ? '#2f8a54' : '#c93f45';
+    box.style.background = ok ? '#ecf9f0' : '#fff1f1';
+    box.style.borderLeftColor = ok ? '#6bbf8a' : '#e8555a';
+  };
+  if (!/^https?:\/\//.test(url) || key.length < 40) return say('先把 Project URL 和 anon key 填完整（URL 要以 https:// 开头）', false);
+  say('测试中…', true);
+
+  const h = { apikey: key, Authorization: 'Bearer ' + key };
+  let r, txt;
+  try {
+    r = await fetch(url + '/rest/v1/orders?select=id&limit=1', { headers: h });
+    txt = await r.text();
+  } catch (e) {
+    return say('连不上这个地址：' + e.message + ' —— 检查 Project URL 里有没有多空格、是不是漏了 https://', false);
+  }
+  if (r.status === 404 || /PGRST205|does not exist/i.test(txt)) {
+    return say('地址和 key 通了，但 orders 表不存在 → 回 Supabase 的 SQL Editor 重跑 schema.sql', false);
+  }
+  if (r.status === 401 || r.status === 403) {
+    return say('key 不对（HTTP ' + r.status + '）→ 去 Project Settings → API 重新复制 anon public key', false);
+  }
+  if (!r.ok) return say('读取失败 HTTP ' + r.status + '：' + txt.slice(0, 140), false);
+
+  let rows = [];
+  try { rows = JSON.parse(txt); } catch (_) {}
+
+  const w = await fetch(url + '/rest/v1/orders', {
+    method: 'POST',
+    headers: { ...h, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    body: JSON.stringify({ items: [], note: '__selfcheck__', status: 'pending' })
+  });
+  if (!w.ok) {
+    const wt = await w.text();
+    return say('能读、但写不进去（HTTP ' + w.status + '）→ 权限策略没建全，重跑 schema.sql 里的 create policy 那几行。' + wt.slice(0, 100), false);
+  }
+  let created = [];
+  try { created = await w.json(); } catch (_) {}
+  if (created[0] && created[0].id) {
+    await fetch(url + '/rest/v1/orders?id=eq.' + created[0].id, { method: 'DELETE', headers: h }).catch(() => {});
+  }
+  say('✅ 数据库完全正常：能读（现有 ' + rows.length + ' 条）、能写、能删。现在点上面「生成两个链接」就行', true);
+}
+if ($('#btnTest')) $('#btnTest').onclick = testConn;
 if ($('#btnGen')) $('#btnGen').onclick = buildLinks;
 document.querySelectorAll('[data-copy]').forEach((b) => {
   b.onclick = async () => {
